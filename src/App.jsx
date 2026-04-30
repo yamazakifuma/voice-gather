@@ -14,12 +14,12 @@ export default function VoiceGather() {
   const [view, setView] = useState("home");
   const [boards, setBoards] = useState([]);
   const [activeBoardId, setActiveBoardId] = useState(null);
-  const [opinionsByBoard, setOpinionsByBoard] = useState({}); // boardId -> opinions[]
+  const [opinionsByBoard, setOpinionsByBoard] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [globalError, setGlobalError] = useState("");
 
-  // 初回ロード: ボード一覧を取得
+  // 初回ロード: ボード一覧を取得 + URLハッシュからお題を開く
   useEffect(() => {
     (async () => {
       try {
@@ -29,13 +29,45 @@ export default function VoiceGather() {
           .order("created_at", { ascending: false });
         if (error) throw error;
         setBoards(data || []);
+
+        const hash = window.location.hash.replace("#", "");
+        if (hash && (data || []).some((b) => b.id === hash)) {
+          setActiveBoardId(hash);
+          setView("board");
+        }
       } catch (e) {
         console.error(e);
         setGlobalError("データベースへの接続に失敗しました。設定をご確認ください。");
       }
       setLoaded(true);
     })();
+
+    const onHashChange = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (hash) {
+        setActiveBoardId(hash);
+        setView("board");
+      } else {
+        setActiveBoardId(null);
+        setView("home");
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  // ボードを開いたら URL のハッシュも更新
+  useEffect(() => {
+    if (view === "board" && activeBoardId) {
+      if (window.location.hash !== `#${activeBoardId}`) {
+        window.history.replaceState(null, "", `#${activeBoardId}`);
+      }
+    } else if (view === "home") {
+      if (window.location.hash) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
+  }, [view, activeBoardId]);
 
   // ボード詳細を開いたら、その意見を取得
   useEffect(() => {
@@ -152,12 +184,10 @@ export default function VoiceGather() {
           alert("削除に失敗しました: " + error.message);
           return;
         }
-        // ローカル状態更新
         setOpinionsByBoard((prev) => ({
           ...prev,
           [boardId]: (prev[boardId] || []).filter((o) => o.id !== opinion.id),
         }));
-        // グルーピングは古くなる → 破棄
         await updateBoard(boardId, { groups: null });
         setConfirmDialog(null);
       },
@@ -379,7 +409,7 @@ function Home({ boards, opinionsByBoard, onCreate, onOpen, onRequestDelete }) {
 }
 
 function BoardCard({ board, opinionCount, onOpen, onDelete }) {
-  const count = opinionCount; // undefined のときは "—" 表示
+  const count = opinionCount;
   const groupCount = board.groups?.groups?.length || 0;
   return (
     <article className="vg-card-board" onClick={onOpen}>
@@ -541,8 +571,25 @@ function Board({ board, opinions, onUpdate, onRefresh, onBack, onRequestDeleteOp
   const [grouping, setGrouping] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
 
   const groups = board.groups;
+
+  const shareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${window.location.pathname}#${board.id}`
+      : "";
+
+  const copyShareUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setToast("URLをコピーしました");
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      setToast("コピーに失敗しました。URLを直接選択してください。");
+    }
+  };
 
   useEffect(() => {
     if (!toast) return;
@@ -550,7 +597,6 @@ function Board({ board, opinions, onUpdate, onRefresh, onBack, onRequestDeleteOp
     return () => clearTimeout(t);
   }, [toast]);
 
-  // ボードを開いたら定期的に意見を再取得(他の人の投稿を反映)
   useEffect(() => {
     const id = setInterval(() => {
       if (tab === "collect") onRefresh();
@@ -573,7 +619,6 @@ function Board({ board, opinions, onUpdate, onRefresh, onBack, onRequestDeleteOp
       setSubmitting(false);
       return;
     }
-    // グルーピングは古くなる → 破棄
     if (board.groups) await onUpdate({ groups: null });
     await onRefresh();
     setInput("");
@@ -639,6 +684,26 @@ function Board({ board, opinions, onUpdate, onRefresh, onBack, onRequestDeleteOp
         <button className="vg-btn-ghost" onClick={onBack}>
           <BackIcon /> お題一覧へ
         </button>
+
+        <div className="vg-share-bar">
+          <div className="vg-share-bar-label">
+            <ShareIcon /> このお題を共有するURL
+          </div>
+          <div className="vg-share-bar-row">
+            <input
+              className="vg-input vg-share-input"
+              readOnly
+              value={shareUrl}
+              onFocus={(e) => e.target.select()}
+            />
+            <button
+              className={`vg-btn ${shareCopied ? "vg-btn-success" : "vg-btn-primary"} vg-btn-sm`}
+              onClick={copyShareUrl}
+            >
+              {shareCopied ? "✓ コピー済み" : "コピー"}
+            </button>
+          </div>
+        </div>
 
         <div className="vg-board-title-block">
           <div className="vg-board-eyebrow">
@@ -878,6 +943,7 @@ function SparkleIcon() { return (<svg width="14" height="14" viewBox="0 0 14 14"
 function AlertIcon() { return (<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.4" /><path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>); }
 function ChatIcon() { return (<svg width="32" height="32" viewBox="0 0 32 32" fill="none"><rect x="4" y="6" width="24" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" /><path d="M10 24l-2 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /><line x1="10" y1="13" x2="22" y2="13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><line x1="10" y1="17" x2="18" y2="17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>); }
 function RefreshIcon() { return (<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6a4 4 0 016.8-2.8L10 4.5M10 1.5V4.5H7M10 6a4 4 0 01-6.8 2.8L2 7.5M2 10.5V7.5H5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>); }
+function ShareIcon() { return (<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M10 4.5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v8a1 1 0 001 1h6a1 1 0 001-1V9.5M7 7h6.5m0 0L11 4.5M13.5 7L11 9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>); }
 
 /* ---------- helpers ---------- */
 function relTime(ts) {
@@ -919,16 +985,16 @@ function GlobalStyles() {
       .vg-app { font-family: var(--font-sans); background: var(--bg); color: var(--ink); min-height: 100vh; -webkit-font-smoothing: antialiased; font-feature-settings: "cv02","cv03","cv04","cv11"; }
       .vg-nav { position: sticky; top: 0; z-index: 50; background: rgba(250,250,247,0.85); backdrop-filter: saturate(140%) blur(12px); -webkit-backdrop-filter: saturate(140%) blur(12px); border-bottom: 1px solid var(--border); }
       .vg-nav-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; height: 60px; display: flex; align-items: center; gap: 20px; }
-      .vg-brand { display: inline-flex; align-items: center; gap: 10px; background: none; border: none; padding: 0; cursor: pointer; }
-      .vg-brand-mark { width: 32px; height: 32px; display: inline-grid; place-items: center; background: var(--brand); color: #FBE9EC; border-radius: var(--radius-sm); box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 1px 2px rgba(155,35,53,0.2); }
-      .vg-brand-name { font-family: var(--font-jp); font-weight: 700; font-size: 18px; letter-spacing: 0.02em; color: var(--ink); }
-      .vg-breadcrumbs { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-4); margin-left: 4px; }
-      .vg-crumb-link { background: none; border: none; padding: 4px 8px; font-size: 13.5px; color: var(--ink-4); cursor: pointer; border-radius: var(--radius-sm); font-family: inherit; }
+      .vg-brand { display: inline-flex; align-items: center; gap: 10px; background: none; border: none; padding: 0; cursor: pointer; flex-shrink: 0; }
+      .vg-brand-mark { width: 32px; height: 32px; display: inline-grid; place-items: center; background: var(--brand); color: #FBE9EC; border-radius: var(--radius-sm); box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 1px 2px rgba(155,35,53,0.2); flex-shrink: 0; }
+      .vg-brand-name { font-family: var(--font-jp); font-weight: 700; font-size: 18px; letter-spacing: 0.02em; color: var(--ink); white-space: nowrap; }
+      .vg-breadcrumbs { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-4); margin-left: 4px; min-width: 0; }
+      .vg-crumb-link { background: none; border: none; padding: 4px 8px; font-size: 13.5px; color: var(--ink-4); cursor: pointer; border-radius: var(--radius-sm); font-family: inherit; flex-shrink: 0; }
       .vg-crumb-link:hover { background: var(--bg-soft); color: var(--ink-2); }
-      .vg-crumb-sep { color: var(--ink-5); }
+      .vg-crumb-sep { color: var(--ink-5); flex-shrink: 0; }
       .vg-crumb-current { color: var(--ink); font-weight: 500; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .vg-nav-right { margin-left: auto; }
-      .vg-nav-pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; background: var(--success-soft); color: var(--success); font-size: 12px; font-weight: 500; border-radius: 999px; border: 1px solid #C9D9C0; }
+      .vg-nav-right { margin-left: auto; flex-shrink: 0; }
+      .vg-nav-pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; background: var(--success-soft); color: var(--success); font-size: 12px; font-weight: 500; border-radius: 999px; border: 1px solid #C9D9C0; white-space: nowrap; }
       .vg-nav-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(79,107,63,0.18); animation: pulseDot 2s infinite; }
       @keyframes pulseDot { 0%, 100% { box-shadow: 0 0 0 3px rgba(79,107,63,0.18); } 50% { box-shadow: 0 0 0 6px rgba(79,107,63,0.06); } }
       .vg-main { max-width: 1200px; margin: 0 auto; padding: 40px 24px 80px; }
@@ -945,12 +1011,14 @@ function GlobalStyles() {
       .vg-btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
       .vg-btn-danger { background: var(--danger); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 1px 2px rgba(185,28,28,0.2); }
       .vg-btn-danger:hover:not(:disabled) { background: #991B1B; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(185,28,28,0.32); }
+      .vg-btn-success { background: var(--success); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset; }
       .vg-btn-ghost { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; background: transparent; color: var(--ink-3); border: 1px solid transparent; border-radius: var(--radius); font-family: var(--font-sans); font-weight: 500; font-size: 13.5px; cursor: pointer; transition: all 0.15s; }
       .vg-btn-ghost:hover { background: var(--bg-soft); color: var(--ink); }
       .vg-btn-ghost-sm { font-size: 12px; padding: 5px 10px; }
       .vg-btn-ghost-bordered { background: var(--bg-elev); color: var(--ink-2); border: 1px solid var(--border); }
       .vg-btn-ghost-bordered:hover { background: var(--bg-soft); border-color: var(--border-strong); }
       .vg-btn-lg { padding: 12px 22px; font-size: 15px; border-radius: var(--radius-lg); }
+      .vg-btn-sm { padding: 8px 14px; font-size: 12.5px; }
       .vg-icon-btn { width: 28px; height: 28px; display: inline-grid; place-items: center; background: transparent; border: none; border-radius: var(--radius-sm); cursor: pointer; color: var(--ink-4); transition: all 0.15s; }
       .vg-icon-btn:hover { background: var(--danger-soft); color: var(--danger); }
       .vg-home { display: flex; flex-direction: column; gap: 64px; }
@@ -1017,6 +1085,12 @@ function GlobalStyles() {
       .vg-bs-num { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
       .vg-bs-lbl { font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 5px; }
       .vg-bs-divider { width: 1px; height: 32px; background: var(--border); }
+
+      .vg-share-bar { margin: 14px 0 0; padding: 12px 14px; background: var(--brand-tint); border: 1px solid var(--brand-line); border-radius: var(--radius); }
+      .vg-share-bar-label { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brand-deep); margin-bottom: 8px; }
+      .vg-share-bar-row { display: flex; gap: 8px; align-items: stretch; }
+      .vg-share-input { flex: 1; font-family: var(--font-mono); font-size: 12px; background: var(--bg-elev); min-width: 0; padding: 8px 12px; }
+
       .vg-tabs { display: flex; gap: 4px; padding: 6px; margin: 28px 0 24px; background: var(--bg-soft); border-radius: var(--radius); max-width: max-content; }
       .vg-tab { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; background: transparent; border: none; font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--ink-4); cursor: pointer; border-radius: 7px; transition: all 0.15s; }
       .vg-tab:hover:not(:disabled):not(.active) { color: var(--ink-2); }
@@ -1082,6 +1156,43 @@ function GlobalStyles() {
       .vg-modal-actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 4px; }
       .vg-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 11px 18px; background: var(--ink); color: #fff; font-size: 13.5px; font-weight: 500; border-radius: var(--radius); box-shadow: var(--shadow-lg); z-index: 100; animation: toastIn 0.3s ease-out; }
       @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+      /* ---------- Mobile responsive ---------- */
+      @media (max-width: 640px) {
+        .vg-main { padding: 24px 16px 60px; }
+        .vg-nav-inner { padding: 0 16px; gap: 10px; height: 56px; }
+        .vg-brand-mark { width: 28px; height: 28px; }
+        .vg-brand-name { font-size: 14px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+        .vg-breadcrumbs { font-size: 12px; gap: 4px; flex: 1; min-width: 0; }
+        .vg-crumb-link { padding: 4px 6px; font-size: 12px; }
+        .vg-crumb-current { max-width: 120px; font-size: 12px; }
+        .vg-nav-pill { display: none; }
+
+        .vg-hero { padding: 32px 0 8px; }
+        .vg-hero-title { font-size: 28px; line-height: 1.3; }
+        .vg-hero-sub { font-size: 14px; line-height: 1.7; }
+        .vg-hero::before { display: none; }
+
+        .vg-create-h { font-size: 26px; }
+        .vg-create-body { padding: 8px 0 60px; }
+
+        .vg-board-stats { gap: 14px; padding: 14px 16px; width: 100%; max-width: none; justify-content: space-between; }
+        .vg-bs-num { font-size: 18px; }
+        .vg-board-title { font-size: 22px; }
+
+        .vg-cluster-cta { padding: 16px; }
+        .vg-cluster-cta button { width: 100%; }
+
+        .vg-op-grid { grid-template-columns: 1fr; }
+        .vg-cluster-grid { grid-template-columns: 1fr; }
+        .vg-op-delete { opacity: 1; }
+
+        .vg-form-footer { flex-direction: column-reverse; }
+        .vg-form-footer button { width: 100%; }
+
+        .vg-share-bar-row { flex-direction: column; }
+        .vg-share-bar-row button { width: 100%; }
+      }
     `}</style>
   );
 }
