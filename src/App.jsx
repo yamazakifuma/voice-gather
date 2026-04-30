@@ -19,8 +19,9 @@ export default function VoiceGather() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [globalError, setGlobalError] = useState("");
 
-  // 初回ロード: ボード一覧を取得 + URLハッシュからお題を開く
+// 初回ロード: ボード一覧を取得 + URLハッシュからお題を開く
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const { data, error } = await supabase
@@ -28,25 +29,47 @@ export default function VoiceGather() {
           .select("*")
           .order("created_at", { ascending: false });
         if (error) throw error;
-        setBoards(data || []);
+        if (!mounted) return;
 
-        const hash = window.location.hash.replace("#", "");
-        if (hash && (data || []).some((b) => b.id === hash)) {
-          setActiveBoardId(hash);
-          setView("board");
+        const list = data || [];
+        setBoards(list);
+
+        // URLにハッシュがあれば、そのお題を直接開く
+        const hash = window.location.hash.replace(/^#/, "");
+        console.log("[VG] initial hash:", hash, "boards:", list.map(b => b.id));
+        if (hash) {
+          const found = list.find((b) => b.id === hash);
+          if (found) {
+            setActiveBoardId(found.id);
+            setView("board");
+          } else {
+            console.warn("[VG] hash board not found:", hash);
+          }
         }
       } catch (e) {
         console.error(e);
-        setGlobalError("データベースへの接続に失敗しました。設定をご確認ください。");
+        if (mounted) {
+          setGlobalError("データベースへの接続に失敗しました。設定をご確認ください。");
+        }
       }
-      setLoaded(true);
+      if (mounted) setLoaded(true);
     })();
 
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // ハッシュ変更を監視(別タブから戻ったときなど)
+  useEffect(() => {
     const onHashChange = () => {
-      const hash = window.location.hash.replace("#", "");
+      const hash = window.location.hash.replace(/^#/, "");
       if (hash) {
-        setActiveBoardId(hash);
-        setView("board");
+        // 既に表示中のお題と違う場合のみ切り替え
+        if (activeBoardId !== hash) {
+          setActiveBoardId(hash);
+          setView("board");
+        }
       } else {
         setActiveBoardId(null);
         setView("home");
@@ -54,7 +77,7 @@ export default function VoiceGather() {
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  }, [activeBoardId]);
 
   // ボードを開いたら URL のハッシュも更新
   useEffect(() => {
