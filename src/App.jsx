@@ -79,8 +79,9 @@ export default function VoiceGather() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [activeBoardId]);
 
-  // ボードを開いたら URL のハッシュも更新
+ // ボードを開いたら URL のハッシュも更新(初期ロード完了後のみ)
   useEffect(() => {
+    if (!loaded) return; // 初期ロード中はハッシュをいじらない
     if (view === "board" && activeBoardId) {
       if (window.location.hash !== `#${activeBoardId}`) {
         window.history.replaceState(null, "", `#${activeBoardId}`);
@@ -90,7 +91,7 @@ export default function VoiceGather() {
         window.history.replaceState(null, "", window.location.pathname);
       }
     }
-  }, [view, activeBoardId]);
+  }, [view, activeBoardId, loaded]);
 
   // ボード詳細を開いたら、その意見を取得
   useEffect(() => {
